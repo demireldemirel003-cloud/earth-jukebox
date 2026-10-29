@@ -65,7 +65,10 @@ export class EarthSonifier {
   playColumn(layers: AudioLayerReading[]): void {
     if (!this.context || this.context.state !== 'running') return
     const startAt = this.context.currentTime + 0.004
-    const activeCount = Math.max(1, layers.filter((layer) => layer.volume > 0).length)
+    const activeCount = Math.max(
+      1,
+      layers.filter((layer) => layer.volume > 0 && layer.reading.points.some((point) => point.value !== null)).length,
+    )
     const mixScale = 1 / Math.sqrt(activeCount)
 
     for (const layer of layers) {
@@ -107,6 +110,44 @@ export class EarthSonifier {
             0.15,
             'triangle',
           )
+        })
+      } else if (layer.role === 'ocean-life') {
+        points.forEach((point, index) => {
+          const chlorophyll = clamp((Math.log10(Math.max(point.value, 0.001)) + 3) / 4.3, 0, 1)
+          const frequency = describeSound(point.latitude, -5).frequency
+          const amplitude = layer.volume * mixScale * (0.008 + chlorophyll * 0.026)
+          this.playTone(frequency, amplitude, startAt + index * 0.018, 0.2, 'triangle')
+          this.playTone(frequency * 2, amplitude * 0.2, startAt + index * 0.018, 0.24, 'sine')
+        })
+      } else if (layer.role === 'water-vapor') {
+        points.forEach((point, index) => {
+          const vapor = clamp(point.value / 8, 0, 1)
+          this.playTone(
+            describeSound(point.latitude, 12).frequency,
+            layer.volume * mixScale * (0.008 + vapor * 0.026),
+            startAt + index * 0.018,
+            0.2,
+            'sine',
+          )
+        })
+      } else if (layer.role === 'cloud') {
+        points.forEach((point, index) => {
+          const thickness = clamp(point.value / 100, 0, 1)
+          this.playTone(
+            describeSound(point.latitude, 5).frequency,
+            layer.volume * mixScale * (0.008 + thickness * 0.025),
+            startAt + index * 0.018,
+            0.14,
+            'triangle',
+          )
+        })
+      } else if (layer.role === 'night-lights') {
+        points.forEach((point, index) => {
+          const radiance = clamp((Math.log10(Math.max(point.value, 0.01)) + 2) / 5, 0, 1)
+          const frequency = describeSound(point.latitude, 24).frequency
+          const amplitude = layer.volume * mixScale * (0.008 + radiance * 0.034)
+          this.playTone(frequency, amplitude, startAt + index * 0.018, 0.2, 'sine')
+          this.playTone(frequency * 2, amplitude * 0.28, startAt + index * 0.018, 0.29, 'sine')
         })
       } else {
         points.forEach((point, index) => {

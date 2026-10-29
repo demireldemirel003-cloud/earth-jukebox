@@ -18,6 +18,12 @@ const SCENES: Record<string, { title: string; layers: string[] }> = {
   ocean: { title: 'Ocean', layers: [LAYER_SPECS[0].id, LAYER_SPECS[1].id] },
   land: { title: 'Land & Life', layers: ['ndvi'] },
   poles: { title: 'Sky/Poles', layers: ['sea-ice', LAYER_SPECS[1].id] },
+  oceanLife: { title: 'Ocean Life', layers: ['OCI_PACE_Chlorophyll_a', LAYER_SPECS[0].id] },
+  humans: { title: 'Humans', layers: ['VIIRS_SNPP_DayNightBand_At_Sensor_Radiance'] },
+  air: {
+    title: 'Air & Clouds',
+    layers: ['MODIS_Terra_Water_Vapor_5km_Day', 'MODIS_Terra_Cloud_Optical_Thickness'],
+  },
   everything: { title: 'Everything', layers: LAYER_SPECS.map((spec) => spec.id) },
 }
 type LoadState = 'loading' | 'ready' | 'error'
@@ -94,9 +100,9 @@ app.innerHTML = `
         <section class="focus-legend"><div><span id="legend-title">COLOR SCALE</span><span id="legend-units">—</span></div><div id="color-legend" class="color-legend"></div><div class="legend-ticks"><span id="legend-min">—</span><span id="legend-mid">—</span><span id="legend-max">—</span></div><p id="science-note">Readings are colormap-bin midpoint estimates, not source precision.</p></section>
       </div>
       <aside class="sound-panel">
-        <section class="layers-section"><div class="section-heading"><div><span class="eyebrow">INSTRUMENTS</span><h2>Layer mix</h2></div><span id="loading-summary">0 / 4 ready</span></div><div id="layer-list" class="layer-list"></div><div id="layer-errors" class="layer-errors" aria-live="polite"></div></section>
+        <section class="layers-section"><div class="section-heading"><div><span class="eyebrow">INSTRUMENTS</span><h2>Layer mix</h2></div><span id="loading-summary">0 / ${LAYER_SPECS.length} ready</span></div><div id="layer-list" class="layer-list"></div><div id="layer-errors" class="layer-errors" aria-live="polite"></div></section>
         <section class="profile-section"><div class="section-heading"><div><span class="eyebrow">CURRENT COLUMN</span><h2>What you hear</h2></div><span class="column-number"><span id="column-number">001</span> / ${COLUMN_COUNT}</span></div><div class="chart-caption"><span>LATITUDE</span><span>NORTH ↑ · NORMALIZED COLOR SCALE</span></div><svg id="profile-chart" class="profile-chart" viewBox="0 0 360 174" role="img"></svg><div id="reading-list" class="reading-list" aria-live="polite"><p class="empty-reading">Layer readings will appear here.</p></div><p id="difference-summary" class="difference-summary" aria-live="polite"></p></section>
-        <section class="how-to-listen"><h3>How to listen</h3><p>The line scans west to east. North is higher in pitch. Warm water sustains an arpeggio; rain adds drops, sea ice rings at the poles, and vegetation sings on land.</p></section><div class="audio-notice"><span>↗</span><span id="audio-notice-text">Press play to enable sound in your browser.</span></div>
+        <section class="how-to-listen"><h3>How to listen</h3><p>The line scans west to east. North is higher in pitch. Warm water sustains an arpeggio; rain adds drops, sea ice rings at the poles, vegetation and ocean chlorophyll shimmer, clouds breathe, and night lights chime.</p></section><div class="audio-notice"><span>↗</span><span id="audio-notice-text">Press play to enable sound in your browser.</span></div>
       </aside>
     </section>
     <section class="previews-section"><div class="section-heading"><div><span class="eyebrow">GIBS IMAGERY</span><h2>Layer previews</h2></div><span>SELECT A PREVIEW TO FOCUS</span></div><div id="preview-list" class="preview-list"></div></section>
@@ -152,10 +158,22 @@ function selectedAsset(state: LayerState, side: Side = activeSide): LoadedLayer 
 
 function dateLabel(asset: LoadedLayer | undefined, requested: string): string {
   if (!asset) return `requested ${requested} · loading`
-  const using = asset.available ? `using ${asset.archive ? 'archive ' : ''}${asset.usedDate}` : 'Not available'
+  const daysOld = Math.max(
+    0,
+    Math.round((Date.parse(`${requested}T00:00:00Z`) - Date.parse(`${asset.usedDate}T00:00:00Z`)) / 86_400_000),
+  )
+  const using = !asset.available
+    ? 'Not available'
+    : asset.latestFallback
+      ? `latest available ${asset.usedDate} · ${daysOld} days old`
+      : `using ${asset.archive ? 'archive ' : ''}${asset.usedDate}`
   const sensor = asset.sensorLabel ? ` · ${asset.sensorLabel}` : ''
   const product = asset.productLabel && asset.productLabel !== asset.sensorLabel ? ` · ${asset.productLabel}` : ''
-  return `${asset.archive && asset.available ? '<b>Archive</b> · ' : ''}requested ${requested} · ${using}${sensor}${product} · ${safeText(asset.cadence)}`
+  return `${asset.archive && asset.available ? '<b>Archive</b> · ' : ''}requested ${safeText(requested)} · ${using}${sensor}${product} · ${safeText(asset.cadence)}`
+}
+
+function formatLegendValue(value: number): string {
+  return String(Number(value.toPrecision(3)))
 }
 
 function setPixelStatus(kind: 'is-pending' | 'is-ready' | 'is-error', text: string): void {
@@ -220,7 +238,7 @@ function updateLayerControls(): void {
       <div class="layer-card-top"><label class="layer-toggle"><input class="layer-enabled" type="checkbox" ${state.enabled ? 'checked' : ''} ${!ready ? 'disabled' : ''}/><span></span></label>
         <button class="focus-select" type="button" data-action="focus" ${!available ? 'disabled' : ''} aria-pressed="${state.spec.id === focusId}"><span class="layer-name">${safeText(title)}</span><span class="layer-date">${label}</span></button>
         <span class="load-state ${state.status}">${state.status === 'error' ? 'ERROR' : !ready ? 'LOAD' : available ? 'READY' : 'NO DATA'}</span></div>
-      <div class="layer-legend"><span>${available ? safeText(asset.minValue.toPrecision(2)) : '—'}</span><div class="layer-swatch" style="background:${asset?.legendGradient ?? 'linear-gradient(90deg,#28322c,#596458)'}"></div><span>${available ? `${safeText(asset.maxValue.toPrecision(2))} ${safeText(asset.units)}` : '—'}</span></div>
+      <div class="layer-legend"><span>${available ? safeText(formatLegendValue(asset.minValue)) : '—'}</span><div class="layer-swatch" style="background:${asset?.legendGradient ?? 'linear-gradient(90deg,#28322c,#596458)'}"></div><span>${available ? `${safeText(formatLegendValue(asset.maxValue))} ${safeText(asset.units)}` : '—'}</span></div>
       <div class="layer-card-bottom"><button class="mini-control ${state.muted ? 'is-on' : ''}" data-action="mute" type="button" ${!available ? 'disabled' : ''}>${state.muted ? 'MUTED' : 'MUTE'}</button><button class="mini-control ${state.solo ? 'is-on' : ''}" data-action="solo" type="button" ${!available ? 'disabled' : ''}>SOLO</button><input class="layer-volume" type="range" min="0" max="1" step="0.01" value="${state.volume}" ${!available ? 'disabled' : ''}/><output class="volume-value">${Math.round(state.volume * 100)}%</output></div>
       <div class="layer-science">${available ? `${pixels.toLocaleString()} valid canvas pixels · ${coverage}% coverage · ${safeText(asset.units)} midpoint estimate` : safeText(asset?.unavailableReason ?? state.error ?? 'Loading capabilities…')}</div></article>`
   }).join('')
@@ -254,9 +272,9 @@ function setFocus(id: string): void {
   q<HTMLElement>('#legend-title').textContent = asset.name.toUpperCase()
   q<HTMLElement>('#legend-units').textContent = asset.units
   q<HTMLElement>('#color-legend').style.background = asset.legendGradient
-  q<HTMLElement>('#legend-min').textContent = asset.minValue.toPrecision(3)
-  q<HTMLElement>('#legend-mid').textContent = ((asset.minValue + asset.maxValue) / 2).toPrecision(3)
-  q<HTMLElement>('#legend-max').textContent = asset.maxValue.toPrecision(3)
+  q<HTMLElement>('#legend-min').textContent = formatLegendValue(asset.minValue)
+  q<HTMLElement>('#legend-mid').textContent = formatLegendValue((asset.minValue + asset.maxValue) / 2)
+  q<HTMLElement>('#legend-max').textContent = formatLegendValue(asset.maxValue)
   q<HTMLElement>('#science-note').textContent = `${asset.productLabel}: ${asset.units}. Values are colormap-bin midpoint estimates (bin width ≈ ${asset.binWidth}).`
   const context = worldCanvas.getContext('2d')
   if (context) {
@@ -274,6 +292,9 @@ function roleOctave(role: LayerSpec['role']): number {
   if (role === 'ice') return 24
   if (role === 'land') return -12
   if (role === 'rain') return 12
+  if (role === 'night-lights') return 24
+  if (role === 'ocean-life') return -5
+  if (role === 'water-vapor') return 12
   return 0
 }
 

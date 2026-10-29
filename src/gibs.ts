@@ -13,7 +13,15 @@ export const WORLD_WIDTH = 1440
 export const WORLD_HEIGHT = 720
 export const SAMPLE_LATITUDES = [75, 50, 25, 0, -25, -50, -75]
 
-export type SoundRole = 'sst' | 'rain' | 'ice' | 'land'
+export type SoundRole =
+  | 'sst'
+  | 'rain'
+  | 'ice'
+  | 'land'
+  | 'ocean-life'
+  | 'water-vapor'
+  | 'cloud'
+  | 'night-lights'
 
 export interface LayerSpec {
   id: string
@@ -52,6 +60,34 @@ export const LAYER_SPECS: LayerSpec[] = [
     defaultVolume: 0.42,
     temporalLabel: 'Vegetation index composite',
   },
+  {
+    id: 'OCI_PACE_Chlorophyll_a',
+    role: 'ocean-life',
+    color: '#55c9bb',
+    defaultVolume: 0.3,
+    temporalLabel: 'Daily',
+  },
+  {
+    id: 'MODIS_Terra_Water_Vapor_5km_Day',
+    role: 'water-vapor',
+    color: '#9eadeb',
+    defaultVolume: 0.26,
+    temporalLabel: 'Daily',
+  },
+  {
+    id: 'MODIS_Terra_Cloud_Optical_Thickness',
+    role: 'cloud',
+    color: '#b5cbd6',
+    defaultVolume: 0.26,
+    temporalLabel: 'Daily',
+  },
+  {
+    id: 'VIIRS_SNPP_DayNightBand_At_Sensor_Radiance',
+    role: 'night-lights',
+    color: '#f1d27b',
+    defaultVolume: 0.24,
+    temporalLabel: 'Daily',
+  },
 ]
 
 export interface ColorBin {
@@ -73,6 +109,7 @@ export interface LayerDefinition extends LayerSpec {
   sensorLabel?: string
   productLabel?: string
   archive?: boolean
+  latestFallback?: boolean
   cadence: string
   available: boolean
   unavailableReason?: string
@@ -130,6 +167,7 @@ export interface PublishedDate {
   sensorLabel: string
   productLabel: string
   archive: boolean
+  latestFallback?: boolean
   available: boolean
   cadence: string
   reason?: string
@@ -176,19 +214,67 @@ function resolveFromCapabilities(
 
   if (spec.id === 'ndvi') {
     if (!comparisonMode && isRecent(requestedDate, latestCapabilityDate(service, 'VIIRS_NOAA21_NDVI_8Day'), 30)) {
-      const viirsDate = chooseCapabilityDate(service, 'VIIRS_NOAA21_NDVI_8Day', requestedDate, CADENCE_TOLERANCE_DAYS['8-day'])
-      if (viirsDate) return makePublished(requestedDate, viirsDate, 'VIIRS_NOAA21_NDVI_8Day', 'VIIRS NOAA-21', 'VIIRS NOAA-21 rolling 8-day NDVI', false, '8-day')
+      const viirsId = 'VIIRS_NOAA21_NDVI_8Day'
+      const viirsDate = chooseCapabilityDate(service, viirsId, requestedDate, CADENCE_TOLERANCE_DAYS['8-day'])
+      const latestViirsDate = viirsDate ?? latestCapabilityDateOnOrBefore(service, viirsId, requestedDate)
+      if (latestViirsDate) {
+        return makePublished(
+          requestedDate,
+          latestViirsDate,
+          viirsId,
+          'VIIRS NOAA-21',
+          'VIIRS NOAA-21 rolling 8-day NDVI',
+          false,
+          '8-day',
+          !viirsDate,
+        )
+      }
     }
-    const terraDate = chooseCapabilityDate(service, 'MODIS_Terra_L3_NDVI_16Day', requestedDate, CADENCE_TOLERANCE_DAYS['16-day'])
-    return terraDate
-      ? makePublished(requestedDate, terraDate, 'MODIS_Terra_L3_NDVI_16Day', 'MODIS Terra', 'MODIS Terra 16-day NDVI', false, '16-day')
+    const terraId = 'MODIS_Terra_L3_NDVI_16Day'
+    const terraDate = chooseCapabilityDate(service, terraId, requestedDate, CADENCE_TOLERANCE_DAYS['16-day'])
+    const latestTerraDate = terraDate ?? latestCapabilityDateOnOrBefore(service, terraId, requestedDate)
+    return latestTerraDate
+      ? makePublished(
+          requestedDate,
+          latestTerraDate,
+          terraId,
+          'MODIS Terra',
+          'MODIS Terra 16-day NDVI',
+          false,
+          '16-day',
+          !terraDate,
+        )
       : makeUnavailable(requestedDate, 'MODIS_Terra_L3_NDVI_16Day', 'MODIS Terra', 'MODIS Terra 16-day NDVI', 'No composite within the 16-day tolerance.', '16-day')
   }
 
+  const productDetails: Record<string, { sensor: string; label: string }> = {
+    OCI_PACE_Chlorophyll_a: { sensor: 'PACE OCI', label: 'PACE chlorophyll-a' },
+    MODIS_Terra_Water_Vapor_5km_Day: { sensor: 'MODIS Terra', label: 'MODIS daytime water vapor' },
+    MODIS_Terra_Cloud_Optical_Thickness: { sensor: 'MODIS Terra', label: 'MODIS cloud optical thickness' },
+    VIIRS_SNPP_DayNightBand_At_Sensor_Radiance: {
+      sensor: 'VIIRS Suomi-NPP',
+      label: 'VIIRS day/night-band at-sensor radiance',
+    },
+  }
+  const details = productDetails[spec.id]
   const date = chooseCapabilityDate(service, spec.id, requestedDate, CADENCE_TOLERANCE_DAYS.daily)
   return date
-    ? makePublished(requestedDate, date, spec.id, spec.id, spec.id, false, 'daily')
-    : makeUnavailable(requestedDate, spec.id, spec.id, spec.id, 'No daily observation within ±1 day.')
+    ? makePublished(
+        requestedDate,
+        date,
+        spec.id,
+        details?.sensor ?? spec.id,
+        details?.label ?? spec.id,
+        false,
+        'daily',
+      )
+    : makeUnavailable(
+        requestedDate,
+        spec.id,
+        details?.sensor ?? spec.id,
+        details?.label ?? spec.id,
+        'No daily observation within ±1 day.',
+      )
 }
 
 function makePublished(
@@ -199,8 +285,19 @@ function makePublished(
   productLabel: string,
   archive: boolean,
   cadence: string,
+  latestFallback = false,
 ): PublishedDate {
-  return { requestedDate, usedDate, productId, sensorLabel, productLabel, archive, available: true, cadence }
+  return {
+    requestedDate,
+    usedDate,
+    productId,
+    sensorLabel,
+    productLabel,
+    archive,
+    latestFallback,
+    available: true,
+    cadence,
+  }
 }
 
 function makeUnavailable(
@@ -261,6 +358,10 @@ function capabilityDates(service: GibsService, id: string): string[] {
 
 function latestCapabilityDate(service: GibsService, id: string): string {
   return capabilityDates(service, id).at(-1) ?? ''
+}
+
+function latestCapabilityDateOnOrBefore(service: GibsService, id: string, requested: string): string | undefined {
+  return capabilityDates(service, id).filter((date) => date <= requested).at(-1)
 }
 
 export function getLatestCompleteDate(service: GibsService): string {
@@ -384,6 +485,7 @@ export async function loadLayerDefinition(
     sensorLabel: resolved.sensorLabel,
     productLabel: resolved.productLabel,
     archive: resolved.archive,
+    latestFallback: resolved.latestFallback,
     cadence: resolved.cadence,
     available: resolved.available,
     unavailableReason: resolved.reason,

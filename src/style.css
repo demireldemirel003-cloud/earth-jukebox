@@ -41,7 +41,7 @@ h1 em { color: var(--lime); font-family: 'Playfair Display', Georgia, serif; fon
 .metadata { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: #bac3b3; font-size: 8px; }
 .metadata-dot { width: 5px; height: 5px; }
 
-.scene-tabs { display: flex; gap: 6px; margin: 0 0 10px; padding: 0 0 9px; border-bottom: 1px solid var(--line); }
+.scene-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; padding: 0 0 9px; border-bottom: 1px solid var(--line); }
 .scene-button { padding: 7px 12px; border: 1px solid #394137; border-radius: 2px; background: #171b17; color: #aab3a5; cursor: pointer; font-family: var(--mono); font-size: 8px; letter-spacing: .4px; }
 .scene-button:hover, .scene-button.is-active { border-color: rgba(198,255,122,.65); background: rgba(198,255,122,.1); color: var(--lime); }
 .datebar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0 0 12px; }
@@ -205,8 +205,8 @@ h1 em { color: var(--lime); font-family: 'Playfair Display', Georgia, serif; fon
 }
 
 @media (max-width: 450px) {
-  .scene-tabs { gap: 4px; }
-  .scene-button { flex: 1; padding: 7px 4px; font-size: 7px; }
+  .scene-tabs { flex-wrap: nowrap; gap: 4px; overflow-x: auto; }
+  .scene-button { flex: 0 0 auto; padding: 7px 6px; font-size: 7px; white-space: nowrap; }
   .transport { gap: 7px; padding: 0 6px; }
   .play-button { min-width: 112px; }
   .speed-label { display: none; }
