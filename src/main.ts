@@ -96,16 +96,15 @@ app.innerHTML = `
         <div class="focus-heading"><div><span class="eyebrow">FOCUS LAYER</span><h2 id="focus-name">Loading NASA layers…</h2></div><span id="focus-date" class="focus-date">—</span></div>
         <div class="map-frame" id="world-stage"><canvas id="world-canvas" width="${WORLD_WIDTH}" height="${WORLD_HEIGHT}" aria-label="Fixed global equirectangular NASA raster"></canvas><svg class="scan-overlay" viewBox="0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}" preserveAspectRatio="none" aria-hidden="true"><line id="scan-line" x1="0" y1="0" x2="0" y2="${WORLD_HEIGHT}"></line><circle id="scan-mark" cx="0" cy="${WORLD_HEIGHT / 2}" r="5"></circle><rect id="longitude-label-top-bg" x="-43" y="9" width="86" height="23" rx="3"></rect><text id="longitude-label-top" x="0" y="24">0°</text><rect id="longitude-label-bottom-bg" x="-43" y="${WORLD_HEIGHT - 32}" width="86" height="23" rx="3"></rect><text id="longitude-label-bottom" x="0" y="${WORLD_HEIGHT - 17}">0°</text></svg><div id="stage-message" class="stage-message"><span class="stage-spinner"></span> Reading GIBS capabilities…</div></div>
         <div id="longitude-axis" class="longitude-axis"></div><div class="map-caption"><span>WEST <b>→</b> EAST · DRAG OR TAP TO SCRUB</span><span id="pixel-status" class="pixel-status is-pending" role="status" aria-live="polite"><span class="status-indicator"></span> Loading layers…</span></div>
-        <div class="transport"><button id="play-button" class="play-button" type="button" disabled><span id="play-icon">▶</span><span id="play-label">LOADING DATA</span></button><div class="transport-divider"></div><label class="speed-control" for="speed-slider"><span class="speed-label">SPEED</span><input id="speed-slider" type="range" min="0.5" max="2" step="0.1" value="1" /><output id="speed-value">1.0×</output></label><div class="mix-meter"><span>MIX PEAK</span><output id="peak-meter">— dBFS</output></div></div><div class="progress-track"><div id="progress-fill"></div></div>
+        <section class="profile-section"><div class="section-heading"><div><span class="eyebrow">CURRENT COLUMN</span><h2>What you hear</h2></div><span class="column-number"><span id="column-number">001</span> / ${COLUMN_COUNT}</span></div><div class="chart-caption"><span>LATITUDE</span><span>NORTH ↑ · NORMALIZED COLOR SCALE</span></div><svg id="profile-chart" class="profile-chart" viewBox="0 0 360 174" preserveAspectRatio="none" role="img"></svg><div id="reading-list" class="reading-list" aria-live="polite"><p class="empty-reading">Layer readings will appear here.</p></div><p id="difference-summary" class="difference-summary" aria-live="polite"></p></section>
         <section class="focus-legend"><div><span id="legend-title">COLOR SCALE</span><span id="legend-units">—</span></div><div id="color-legend" class="color-legend"></div><div class="legend-ticks"><span id="legend-min">—</span><span id="legend-mid">—</span><span id="legend-max">—</span></div><p id="science-note">Readings are colormap-bin midpoint estimates, not source precision.</p></section>
+        <div class="transport"><button id="play-button" class="play-button" type="button" disabled><span id="play-icon">▶</span><span id="play-label">LOADING DATA</span></button><div class="transport-divider"></div><label class="speed-control" for="speed-slider"><span class="speed-label">SPEED</span><input id="speed-slider" type="range" min="0.5" max="2" step="0.1" value="1" /><output id="speed-value">1.0×</output></label><div class="mix-meter"><span>MIX PEAK</span><output id="peak-meter">— dBFS</output></div></div><div class="progress-track"><div id="progress-fill"></div></div>
       </div>
       <aside class="sound-panel">
         <section class="layers-section"><div class="section-heading"><div><span class="eyebrow">INSTRUMENTS</span><h2>Layer mix</h2></div><span id="loading-summary">0 / ${LAYER_SPECS.length} ready</span></div><div id="layer-list" class="layer-list"></div><div id="layer-errors" class="layer-errors" aria-live="polite"></div></section>
-        <section class="profile-section"><div class="section-heading"><div><span class="eyebrow">CURRENT COLUMN</span><h2>What you hear</h2></div><span class="column-number"><span id="column-number">001</span> / ${COLUMN_COUNT}</span></div><div class="chart-caption"><span>LATITUDE</span><span>NORTH ↑ · NORMALIZED COLOR SCALE</span></div><svg id="profile-chart" class="profile-chart" viewBox="0 0 360 174" role="img"></svg><div id="reading-list" class="reading-list" aria-live="polite"><p class="empty-reading">Layer readings will appear here.</p></div><p id="difference-summary" class="difference-summary" aria-live="polite"></p></section>
-        <section class="how-to-listen"><h3>How to listen</h3><p>The line scans west to east. North is higher in pitch. Warm water sustains an arpeggio; rain adds drops, sea ice rings at the poles, vegetation and ocean chlorophyll shimmer, clouds breathe, and night lights chime.</p></section><div class="audio-notice"><span>↗</span><span id="audio-notice-text">Press play to enable sound in your browser.</span></div>
+        <section class="how-to-listen"><h3>How to listen</h3><p>The scan moves west to east, left to right in stereo. Nearby pixels blend into legato tones; latitude sets the pentatonic pitch while smoothed values gently shift it with hysteresis. Ocean is wide and calm, Humans bright, and Sky/Poles cool and spacious.</p></section><div class="audio-notice"><span>↗</span><span id="audio-notice-text">Press play to enable sound in your browser.</span></div>
       </aside>
     </section>
-    <section class="previews-section"><div class="section-heading"><div><span class="eyebrow">GIBS IMAGERY</span><h2>Layer previews</h2></div><span>SELECT A PREVIEW TO FOCUS</span></div><div id="preview-list" class="preview-list"></div></section>
     <footer class="page-footer"><span>NASA GIBS · CAPABILITIES-DRIVEN PRODUCT DATES</span><span>RASTERS CACHED BY PRODUCT + DATE · SHARED SCAN</span></footer>
   </main>`
 
@@ -128,7 +127,6 @@ const profileChart = q<SVGSVGElement>('#profile-chart')
 const readingList = q<HTMLDivElement>('#reading-list')
 const differenceSummary = q<HTMLParagraphElement>('#difference-summary')
 const layerList = q<HTMLDivElement>('#layer-list')
-const previewList = q<HTMLDivElement>('#preview-list')
 const loadingSummary = q<HTMLSpanElement>('#loading-summary')
 const layerErrors = q<HTMLDivElement>('#layer-errors')
 const pixelStatus = q<HTMLSpanElement>('#pixel-status')
@@ -234,22 +232,25 @@ function updateLayerControls(): void {
     const ready = state.status === 'ready'
     const pixels = available ? asset.raster.check.validPixels : 0
     const coverage = (pixels / (WORLD_WIDTH * WORLD_HEIGHT) * 100).toFixed(1)
-    return `<article class="layer-card ${state.status} ${state.spec.id === focusId ? 'is-focused' : ''} ${available ? '' : 'is-unavailable'}" data-layer-id="${safeText(state.spec.id)}" data-valid-pixels="${pixels}" style="--layer-color:${state.spec.color}">
-      <div class="layer-card-top"><label class="layer-toggle"><input class="layer-enabled" type="checkbox" ${state.enabled ? 'checked' : ''} ${!ready ? 'disabled' : ''}/><span></span></label>
-        <button class="focus-select" type="button" data-action="focus" ${!available ? 'disabled' : ''} aria-pressed="${state.spec.id === focusId}"><span class="layer-name">${safeText(title)}</span><span class="layer-date">${label}</span></button>
-        <span class="load-state ${state.status}">${state.status === 'error' ? 'ERROR' : !ready ? 'LOAD' : available ? 'READY' : 'NO DATA'}</span></div>
-      <div class="layer-legend"><span>${available ? safeText(formatLegendValue(asset.minValue)) : '—'}</span><div class="layer-swatch" style="background:${asset?.legendGradient ?? 'linear-gradient(90deg,#28322c,#596458)'}"></div><span>${available ? `${safeText(formatLegendValue(asset.maxValue))} ${safeText(asset.units)}` : '—'}</span></div>
-      <div class="layer-card-bottom"><button class="mini-control ${state.muted ? 'is-on' : ''}" data-action="mute" type="button" ${!available ? 'disabled' : ''}>${state.muted ? 'MUTED' : 'MUTE'}</button><button class="mini-control ${state.solo ? 'is-on' : ''}" data-action="solo" type="button" ${!available ? 'disabled' : ''}>SOLO</button><input class="layer-volume" type="range" min="0" max="1" step="0.01" value="${state.volume}" ${!available ? 'disabled' : ''}/><output class="volume-value">${Math.round(state.volume * 100)}%</output></div>
-      <div class="layer-science">${available ? `${pixels.toLocaleString()} valid canvas pixels · ${coverage}% coverage · ${safeText(asset.units)} midpoint estimate` : safeText(asset?.unavailableReason ?? state.error ?? 'Loading capabilities…')}</div></article>`
-  }).join('')
-  previewList.innerHTML = allStates.map((state) => {
-    const asset = selectedAsset(state, 'A') ?? state.assetA
-    const available = asset?.available === true
-    return `<button class="preview-card ${state.spec.id === focusId ? 'is-focused' : ''} ${state.status}" data-preview-id="${safeText(state.spec.id)}" style="--layer-color:${state.spec.color}" ${!available ? 'disabled' : ''}><span class="preview-image">${available ? `<canvas data-preview-canvas="${safeText(state.spec.id)}" width="360" height="180"></canvas>` : '<span class="preview-loading"></span>'}</span><span class="preview-caption"><b>${safeText(asset?.name ?? state.spec.id)}</b><small>${dateLabel(asset, selectedDate)}</small></span></button>`
+    const expanded = layerList.querySelector<HTMLElement>(`[data-layer-id="${CSS.escape(state.spec.id)}"]`)?.classList.contains('is-expanded') ?? false
+    return `<article class="layer-card ${state.status} ${state.spec.id === focusId ? 'is-focused' : ''} ${available ? '' : 'is-unavailable'} ${expanded ? 'is-expanded' : ''}" data-layer-id="${safeText(state.spec.id)}" data-valid-pixels="${pixels}" style="--layer-color:${state.spec.color}">
+      <div class="layer-card-top">
+        <label class="layer-toggle"><input class="layer-enabled" aria-label="Enable ${safeText(title)}" type="checkbox" ${state.enabled ? 'checked' : ''} ${!ready ? 'disabled' : ''}/><span></span></label>
+        <button class="layer-thumbnail" type="button" data-action="focus" aria-label="Focus ${safeText(title)}" ${!available ? 'disabled' : ''}><canvas data-layer-canvas="${safeText(state.spec.id)}" width="96" height="48"></canvas></button>
+        <button class="focus-select" type="button" data-action="focus" ${!available ? 'disabled' : ''} aria-pressed="${state.spec.id === focusId}" title="${safeText(label.replace(/<[^>]*>/g, ''))}"><span class="layer-name">${safeText(title)}</span><span class="layer-date">${label}</span></button>
+        <input class="layer-volume" aria-label="${safeText(title)} volume" type="range" min="0" max="1" step="0.01" value="${state.volume}" ${!available ? 'disabled' : ''}/>
+        <span class="load-state ${state.status}" role="img" aria-label="${state.status === 'error' ? 'Layer failed to load' : !ready ? 'Layer loading' : available ? 'Layer ready' : 'No data'}" title="${state.status === 'error' ? 'Error' : !ready ? 'Loading' : available ? 'Ready' : 'No data'}"></span>
+        <button class="layer-details-toggle" data-action="details" aria-expanded="${expanded}" type="button" aria-label="${expanded ? 'Hide' : 'Show'} ${safeText(title)} details">${expanded ? '−' : '+'}</button>
+      </div>
+      <div class="layer-details" ${expanded ? '' : 'hidden'}>
+        <div class="layer-legend"><span>${available ? safeText(formatLegendValue(asset.minValue)) : '—'}</span><div class="layer-swatch" style="background:${asset?.legendGradient ?? 'linear-gradient(90deg,#28322c,#596458)'}"></div><span>${available ? `${safeText(formatLegendValue(asset.maxValue))} ${safeText(asset.units)}` : '—'}</span></div>
+        <div class="layer-card-bottom"><button class="mini-control ${state.muted ? 'is-on' : ''}" data-action="mute" type="button" ${!available ? 'disabled' : ''}>${state.muted ? 'MUTED' : 'MUTE'}</button><button class="mini-control ${state.solo ? 'is-on' : ''}" data-action="solo" type="button" ${!available ? 'disabled' : ''}>${state.solo ? 'SOLO ON' : 'SOLO'}</button><span class="layer-volume-value">${Math.round(state.volume * 100)}% volume</span></div>
+        <div class="layer-science">${safeText(label.replace(/<[^>]*>/g, ''))} · ${available ? `${pixels.toLocaleString()} valid canvas pixels · ${coverage}% coverage · ${safeText(asset.units)} midpoint estimate` : safeText(asset?.unavailableReason ?? state.error ?? 'Loading capabilities…')}</div>
+      </div></article>`
   }).join('')
   for (const state of allStates) {
     const asset = selectedAsset(state, 'A')
-    const canvas = previewList.querySelector<HTMLCanvasElement>(`[data-preview-canvas="${CSS.escape(state.spec.id)}"]`)
+    const canvas = layerList.querySelector<HTMLCanvasElement>(`[data-layer-canvas="${CSS.escape(state.spec.id)}"]`)
     const context = canvas?.getContext('2d')
     if (context && canvas && asset?.available) {
       context.imageSmoothingEnabled = false
@@ -275,7 +276,7 @@ function setFocus(id: string): void {
   q<HTMLElement>('#legend-min').textContent = formatLegendValue(asset.minValue)
   q<HTMLElement>('#legend-mid').textContent = formatLegendValue((asset.minValue + asset.maxValue) / 2)
   q<HTMLElement>('#legend-max').textContent = formatLegendValue(asset.maxValue)
-  q<HTMLElement>('#science-note').textContent = `${asset.productLabel}: ${asset.units}. Values are colormap-bin midpoint estimates (bin width ≈ ${asset.binWidth}).`
+  q<HTMLElement>('#science-note').textContent = `${asset.productLabel}: ${asset.units}. Values are colormap-bin midpoint estimates (bin width ≈ ${formatLegendValue(asset.binWidth)}).`
   const context = worldCanvas.getContext('2d')
   if (context) {
     context.imageSmoothingEnabled = false
@@ -289,13 +290,20 @@ function setFocus(id: string): void {
 }
 
 function roleOctave(role: LayerSpec['role']): number {
-  if (role === 'ice') return 24
-  if (role === 'land') return -12
-  if (role === 'rain') return 12
-  if (role === 'night-lights') return 24
+  if (role === 'ice' || role === 'night-lights') return 12
+  if (role === 'land') return -7
+  if (role === 'rain') return 5
   if (role === 'ocean-life') return -5
-  if (role === 'water-vapor') return 12
+  if (role === 'water-vapor') return 5
   return 0
+}
+
+function audioScene(sceneId = currentScene): 'ocean' | 'humans' | 'poles' | 'land' | 'air' {
+  if (sceneId === 'poles') return 'poles'
+  if (sceneId === 'humans') return 'humans'
+  if (sceneId === 'land') return 'land'
+  if (sceneId === 'air') return 'air'
+  return 'ocean'
 }
 
 interface LayerColumn {
@@ -309,7 +317,9 @@ function currentReadings(column: number): LayerColumn[] {
   const x = Math.round((column / (COLUMN_COUNT - 1)) * (WORLD_WIDTH - 1))
   return getActiveStates().flatMap((state) => {
     const asset = selectedAsset(state)
-    return asset?.available ? [{ state, asset, reading: sampleLayerColumn(asset.raster.imageData, asset, x), side: activeSide }] : []
+    return asset?.available
+      ? [{ state, asset, reading: sampleLayerColumn(asset.raster.imageData, asset, x, 4), side: activeSide }]
+      : []
   })
 }
 
@@ -328,13 +338,26 @@ function drawScanPosition(column: number, playSound: boolean): void {
   progressFill.style.width = `${((columnIndex + 1) / COLUMN_COUNT) * 100}%`
   const readings = currentReadings(columnIndex)
   renderColumn(readings)
-  if (playSound) sonifier.playColumn(readings.map(({ state, reading }) => ({ role: state.spec.role, volume: state.volume, reading })))
+  if (playSound) {
+    sonifier.playColumn(
+      readings.map(({ state, asset, reading }) => ({
+        role: state.spec.role,
+        volume: state.volume,
+        reading,
+        longitude: reading.longitude,
+        minValue: asset.minValue,
+        maxValue: asset.maxValue,
+      })),
+    )
+  }
 }
 
 function renderColumn(readings: LayerColumn[]): void {
   readingList.innerHTML = readings.map(({ state, asset, reading }) => `<section class="reading-layer" style="--layer-color:${state.spec.color}"><div class="reading-layer-title"><i></i><b>${safeText(asset.name)}</b><small>${asset.usedDate} · ${safeText(asset.sensorLabel ?? '')}</small></div>${reading.points.map((point) => {
     if (point.value === null) return `<div class="reading-value"><span>${formatLatitude(point.latitude)}</span><span class="no-reading-label">No reading (land/ice)</span></div>`
-    const note = describeSound(point.latitude, roleOctave(state.spec.role)).note
+    const normalized = Math.max(0, Math.min(1, (point.value - asset.minValue) / (asset.maxValue - asset.minValue || 1)))
+    const pitchStep = sonifier.getPitchStep(state.spec.role, point.latitude, normalized)
+    const note = describeSound(point.latitude, roleOctave(state.spec.role), pitchStep, audioScene()).note
     return `<div class="reading-value"><span>${formatLatitude(point.latitude)} · ≈ ${safeText(formatReading(point, asset.units))}</span><span class="reading-note">${note}</span></div>`
   }).join('')}</section>`).join('') || '<p class="empty-reading">No active instrument has a reading in this column.</p>'
   const profileData: LayerColumn[] = [...readings]
@@ -414,6 +437,7 @@ function renderDifferences(): void {
 
 function setPlaying(playing: boolean): void {
   isPlaying = playing
+  if (!playing) sonifier.release()
   playButton.classList.toggle('is-playing', playing)
   playButton.setAttribute('aria-label', playing ? 'Pause Earth reading' : 'Play Earth reading')
   playIcon.textContent = playing ? 'Ⅱ' : '▶'
@@ -529,6 +553,7 @@ function shiftYear(date: string, years: number): string {
 function applyScene(sceneId: string): void {
   if (!SCENES[sceneId]) return
   currentScene = sceneId
+  sonifier.setScene(audioScene(sceneId))
   for (const state of states.values()) { state.enabled = SCENES[sceneId].layers.includes(state.spec.id); state.muted = false; state.solo = false }
   document.querySelectorAll<HTMLButtonElement>('.scene-button').forEach((button) => button.classList.toggle('is-active', button.dataset.scene === sceneId))
   if (!getActiveStates().some((state) => state.spec.id === focusId)) {
@@ -555,11 +580,7 @@ layerList.addEventListener('change', (event) => {
   const state = card ? states.get(card.dataset.layerId ?? '') : undefined
   if (!state) return
   if (target.classList.contains('layer-enabled')) state.enabled = target.checked
-  if (target.classList.contains('layer-volume')) {
-    state.volume = Number(target.value)
-    const output = card?.querySelector<HTMLOutputElement>('.volume-value')
-    if (output) output.value = `${Math.round(state.volume * 100)}%`
-  }
+  if (target.classList.contains('layer-volume')) state.volume = Number(target.value)
   updateLayerControls(); drawScanPosition(columnIndex, false); updateUrl()
 })
 layerList.addEventListener('input', (event) => {
@@ -568,8 +589,8 @@ layerList.addEventListener('input', (event) => {
   const state = states.get(target.closest<HTMLElement>('[data-layer-id]')?.dataset.layerId ?? '')
   if (!state) return
   state.volume = Number(target.value)
-  const output = target.closest('.layer-card')?.querySelector<HTMLOutputElement>('.volume-value')
-  if (output) output.value = `${Math.round(state.volume * 100)}%`
+  const label = target.closest('.layer-card')?.querySelector<HTMLElement>('.layer-volume-value')
+  if (label) label.textContent = `${Math.round(state.volume * 100)}% volume`
 })
 layerList.addEventListener('click', (event) => {
   const target = event.target
@@ -577,17 +598,20 @@ layerList.addEventListener('click', (event) => {
   const button = target.closest<HTMLButtonElement>('button[data-action]')
   const state = states.get(target.closest<HTMLElement>('[data-layer-id]')?.dataset.layerId ?? '')
   if (!button || !state) return
+  if (button.dataset.action === 'details') {
+    const card = button.closest<HTMLElement>('.layer-card')
+    const expanded = card?.classList.toggle('is-expanded') ?? false
+    const details = card?.querySelector<HTMLElement>('.layer-details')
+    if (details) details.hidden = !expanded
+    button.setAttribute('aria-expanded', String(expanded))
+    button.setAttribute('aria-label', `${expanded ? 'Hide' : 'Show'} ${state.spec.id} details`)
+    button.textContent = expanded ? '−' : '+'
+    return
+  }
   if (button.dataset.action === 'focus') setFocus(state.spec.id)
   if (button.dataset.action === 'mute') state.muted = !state.muted
   if (button.dataset.action === 'solo') { state.solo = !state.solo; if (state.solo) { state.enabled = true; state.muted = false } }
   updateLayerControls(); drawScanPosition(columnIndex, false); updateUrl()
-})
-previewList.addEventListener('click', (event) => {
-  const target = event.target
-  if (target instanceof Element) {
-    const button = target.closest<HTMLButtonElement>('[data-preview-id]')
-    if (button?.dataset.previewId) setFocus(button.dataset.previewId)
-  }
 })
 stage.addEventListener('pointerdown', (event) => {
   if (!getReadyStates().length) return
@@ -658,6 +682,7 @@ datePicker.value = selectedDate
 compareDatePicker.value = comparisonDate
 compareEnabled.checked = comparisonMode
 updateComparisonControls()
+sonifier.setScene(audioScene())
 buildLongitudeAxis()
 updateLayerControls()
 void loadAllLayers()

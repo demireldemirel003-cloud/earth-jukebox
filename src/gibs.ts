@@ -257,6 +257,29 @@ function resolveFromCapabilities(
     },
   }
   const details = productDetails[spec.id]
+  if (spec.role === 'night-lights') {
+    const dates = capabilityDates(service, spec.id)
+    const latestPriorDate = dates.filter((date) => date <= requestedDate).at(-1)
+    if (!latestPriorDate || dayDifference(requestedDate, latestPriorDate) > 5) {
+      return makeUnavailable(
+        requestedDate,
+        spec.id,
+        details?.sensor ?? spec.id,
+        details?.label ?? spec.id,
+        'No observation within 5 days before the requested date.',
+      )
+    }
+    return makePublished(
+      requestedDate,
+      latestPriorDate,
+      spec.id,
+      details?.sensor ?? spec.id,
+      details?.label ?? spec.id,
+      false,
+      'daily',
+      latestPriorDate !== requestedDate,
+    )
+  }
   const date = chooseCapabilityDate(service, spec.id, requestedDate, CADENCE_TOLERANCE_DAYS.daily)
   return date
     ? makePublished(
@@ -362,6 +385,10 @@ function latestCapabilityDate(service: GibsService, id: string): string {
 
 function latestCapabilityDateOnOrBefore(service: GibsService, id: string, requested: string): string | undefined {
   return capabilityDates(service, id).filter((date) => date <= requested).at(-1)
+}
+
+function dayDifference(later: string, earlier: string): number {
+  return Math.round((Date.parse(`${later}T00:00:00Z`) - Date.parse(`${earlier}T00:00:00Z`)) / 86_400_000)
 }
 
 export function getLatestCompleteDate(service: GibsService): string {
@@ -549,21 +576,35 @@ export function sampleLayerColumn(
   imageData: ImageData,
   definition: LayerDefinition,
   column: number,
+  smoothingRadius = 0,
 ): ColumnReading {
   const x = Math.min(WORLD_WIDTH - 1, Math.max(0, Math.round(column)))
   const points = SAMPLE_LATITUDES.map((latitude) => {
     const y = latitudeToPixel(latitude)
-    const offset = (y * imageData.width + x) * 4
-    if (imageData.data[offset + 3] <= 12) return { latitude, value: null, color: 'transparent' }
-    const bin = resolveColor(
-      definition.palette,
-      definition.colorLookup,
-      imageData.data[offset],
-      imageData.data[offset + 1],
-      imageData.data[offset + 2],
-    )
-    if (!bin) return { latitude, value: null, color: 'transparent' }
-    return { latitude, value: bin.value, color: `rgb(${bin.rgb.join(',')})` }
+    const bins: ColorBin[] = []
+    const radius = Math.max(0, Math.floor(smoothingRadius))
+    for (let dy = -Math.min(2, radius); dy <= Math.min(2, radius); dy += 1) {
+      const sampleY = Math.min(imageData.height - 1, Math.max(0, y + dy))
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        const sampleX = Math.min(imageData.width - 1, Math.max(0, x + dx))
+        const offset = (sampleY * imageData.width + sampleX) * 4
+        if (imageData.data[offset + 3] <= 12) continue
+        const bin = resolveColor(
+          definition.palette,
+          definition.colorLookup,
+          imageData.data[offset],
+          imageData.data[offset + 1],
+          imageData.data[offset + 2],
+        )
+        if (bin) bins.push(bin)
+      }
+    }
+    if (bins.length === 0 || (radius > 0 && bins.length < 3)) {
+      return { latitude, value: null, color: 'transparent' }
+    }
+    const value = bins.reduce((total, bin) => total + bin.value, 0) / bins.length
+    const colorBin = bins[Math.floor(bins.length / 2)]
+    return { latitude, value, color: `rgb(${colorBin.rgb.join(',')})` }
   })
   return { longitude: (x / (WORLD_WIDTH - 1)) * 360 - 180, x, points }
 }
