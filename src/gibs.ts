@@ -1,7 +1,5 @@
 const WMTS_CAPABILITIES_URL =
-  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/1.0.0/WMTSCapabilities.xml'
-const WMS_CAPABILITIES_URL =
-  'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?service=WMS&request=GetCapabilities&version=1.1.1'
+  'https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/1.0.0/WMTSCapabilities.xml'
 const X_LINK_NAMESPACE = 'http://www.w3.org/1999/xlink'
 const CADENCE_TOLERANCE_DAYS: Record<string, number> = {
   daily: 1,
@@ -9,6 +7,8 @@ const CADENCE_TOLERANCE_DAYS: Record<string, number> = {
   '16-day': 8,
   monthly: 15,
 }
+const MAX_FETCH_ATTEMPTS = 3
+const FETCH_TIMEOUT_MS = 45_000
 export const WORLD_WIDTH = 1440
 export const WORLD_HEIGHT = 720
 export const SAMPLE_LATITUDES = [75, 50, 25, 0, -25, -50, -75]
@@ -114,8 +114,13 @@ export interface LayerDefinition extends LayerSpec {
   available: boolean
   unavailableReason?: string
   binWidth: number
-  getMapUrl: string
-  getMapFormat: string
+  tileTemplate: string
+  tileMatrixSet: string
+  tileMatrix: string
+  matrixWidth: number
+  matrixHeight: number
+  tileWidth: number
+  tileHeight: number
   colormapUrl: string
   palette: ColorBin[]
   colorLookup: ReadonlyMap<number, ColorBin>
@@ -155,8 +160,6 @@ export interface LoadedLayer extends LayerDefinition {
 }
 
 export interface GibsService {
-  getMapUrl: string
-  getMapFormat: string
   wmts: Document
 }
 
@@ -176,20 +179,8 @@ export interface PublishedDate {
 const rasterCache = new Map<string, Promise<LayerRaster>>()
 
 export async function loadGibsService(): Promise<GibsService> {
-  const [wmts, wms] = await Promise.all([
-    fetchXml(WMTS_CAPABILITIES_URL, 'GIBS WMTS capabilities'),
-    fetchXml(WMS_CAPABILITIES_URL, 'GIBS EPSG:4326 WMS capabilities'),
-  ])
-  const getMapOperation = Array.from(wms.getElementsByTagNameNS('*', 'GetMap'))[0]
-  if (!getMapOperation) throw new Error('GIBS WMS capabilities do not contain a GetMap operation.')
-  const getMapFormat = Array.from(getMapOperation.getElementsByTagNameNS('*', 'Format'))
-    .map((node) => node.textContent?.trim() ?? '')
-    .find((format) => format.toLowerCase() === 'image/png')
-  const getMapUrl = Array.from(getMapOperation.getElementsByTagNameNS('*', 'OnlineResource'))
-    .map((node) => node.getAttributeNS(X_LINK_NAMESPACE, 'href') ?? '')
-    .find((href) => href.startsWith('https://'))
-  if (!getMapFormat || !getMapUrl) throw new Error('GIBS capabilities do not advertise a PNG GetMap URL.')
-  return { getMapUrl, getMapFormat, wmts }
+  const wmts = await fetchXml(WMTS_CAPABILITIES_URL, 'GIBS EPSG:4326 WMTS capabilities')
+  return { wmts }
 }
 
 function resolveFromCapabilities(
@@ -350,6 +341,62 @@ function findWmtsLayer(service: GibsService, id: string): Element | undefined {
   )
 }
 
+interface WmtsTileGrid {
+  template: string
+  matrixSet: string
+  matrix: string
+  matrixWidth: number
+  matrixHeight: number
+  tileWidth: number
+  tileHeight: number
+}
+
+function findWmtsTileGrid(service: GibsService, layer: Element, id: string): WmtsTileGrid {
+  const resources = Array.from(layer.getElementsByTagNameNS('*', 'ResourceURL')).filter(
+    (candidate) =>
+      candidate.getAttribute('resourceType') === 'tile' &&
+      candidate.getAttribute('format')?.toLowerCase() === 'image/png' &&
+      candidate.hasAttribute('template'),
+  )
+  const resource =
+    resources.find((candidate) => candidate.getAttribute('template')?.includes('{Time}')) ?? resources[0]
+  const template = resource?.getAttribute('template')
+  if (!template) throw new Error(`${id} has no PNG tile URL in GIBS WMTS capabilities.`)
+
+  const matrixSetLinks = Array.from(layer.getElementsByTagNameNS('*', 'TileMatrixSetLink'))
+  const candidates: Array<WmtsTileGrid & { pixels: number; coversRaster: boolean }> = []
+  for (const link of matrixSetLinks) {
+    const matrixSetId = directChildText(link, 'TileMatrixSet')
+    if (!matrixSetId) continue
+    const matrixSet = Array.from(service.wmts.getElementsByTagNameNS('*', 'TileMatrixSet')).find(
+      (candidate) => directChildText(candidate, 'Identifier') === matrixSetId,
+    )
+    if (!matrixSet) continue
+    for (const matrix of Array.from(matrixSet.getElementsByTagNameNS('*', 'TileMatrix'))) {
+      const matrixWidth = Number(directChildText(matrix, 'MatrixWidth'))
+      const matrixHeight = Number(directChildText(matrix, 'MatrixHeight'))
+      const tileWidth = Number(directChildText(matrix, 'TileWidth'))
+      const tileHeight = Number(directChildText(matrix, 'TileHeight'))
+      if (![matrixWidth, matrixHeight, tileWidth, tileHeight].every(Number.isFinite)) continue
+      candidates.push({
+        template,
+        matrixSet: matrixSetId,
+        matrix: directChildText(matrix, 'Identifier') ?? '',
+        matrixWidth,
+        matrixHeight,
+        tileWidth,
+        tileHeight,
+        pixels: matrixWidth * matrixHeight * tileWidth * tileHeight,
+        coversRaster: matrixWidth * tileWidth >= WORLD_WIDTH && matrixHeight * tileHeight >= WORLD_HEIGHT,
+      })
+    }
+  }
+  const suitable = candidates.filter((candidate) => candidate.coversRaster).sort((a, b) => a.pixels - b.pixels)
+  const selected = suitable[0] ?? candidates.sort((a, b) => b.pixels - a.pixels)[0]
+  if (!selected) throw new Error(`${id} has no EPSG:4326 tile matrix in GIBS WMTS capabilities.`)
+  return selected
+}
+
 function capabilityDates(service: GibsService, id: string): string[] {
   const layer = findWmtsLayer(service, id)
   if (!layer) return []
@@ -435,6 +482,7 @@ export async function loadLayerDefinition(
     (candidate) => directChildText(candidate, 'Identifier') === resolved.productId,
   )
   if (!wmtsLayer) throw new Error(`GIBS WMTS capabilities do not advertise ${resolved.productId}.`)
+  const tileGrid = findWmtsTileGrid(service, wmtsLayer, resolved.productId)
   const date = resolved.available ? resolved.usedDate : requestedDate
 
   const metadata = Array.from(wmtsLayer.getElementsByTagNameNS('*', 'Metadata'))
@@ -517,8 +565,13 @@ export async function loadLayerDefinition(
     available: resolved.available,
     unavailableReason: resolved.reason,
     binWidth: nominalBinWidth,
-    getMapUrl: service.getMapUrl,
-    getMapFormat: service.getMapFormat,
+    tileTemplate: tileGrid.template,
+    tileMatrixSet: tileGrid.matrixSet,
+    tileMatrix: tileGrid.matrix,
+    matrixWidth: tileGrid.matrixWidth,
+    matrixHeight: tileGrid.matrixHeight,
+    tileWidth: tileGrid.tileWidth,
+    tileHeight: tileGrid.tileHeight,
     colormapUrl: metadata.href,
     palette,
     colorLookup,
@@ -624,51 +677,90 @@ export function latitudeToPixel(latitude: number): number {
 }
 
 async function fetchLayerRaster(definition: LayerDefinition): Promise<LayerRaster> {
-  const url = new URL(definition.getMapUrl)
-  const parameters: Record<string, string> = {
-    SERVICE: 'WMS',
-    REQUEST: 'GetMap',
-    VERSION: '1.1.1',
-    LAYERS: definition.id,
-    STYLES: '',
-    SRS: 'EPSG:4326',
-    BBOX: '-180,-90,180,90',
-    WIDTH: String(WORLD_WIDTH),
-    HEIGHT: String(WORLD_HEIGHT),
-    FORMAT: definition.getMapFormat,
-    TRANSPARENT: 'TRUE',
-    TIME: definition.date,
+  const tileTasks: Array<Promise<{ row: number; column: number; bitmap?: ImageBitmap }>> = []
+  for (let row = 0; row < definition.matrixHeight; row += 1) {
+    for (let column = 0; column < definition.matrixWidth; column += 1) {
+      tileTasks.push(fetchWmtsTile(definition, row, column))
+    }
   }
-  for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value)
+  const settledTiles = await Promise.allSettled(tileTasks)
+  const rejectedTile = settledTiles.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  )
+  if (rejectedTile) {
+    for (const result of settledTiles) {
+      if (result.status === 'fulfilled') result.value.bitmap?.close()
+    }
+    throw rejectedTile.reason
+  }
+  const tiles = settledTiles.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+  const mosaic = document.createElement('canvas')
+  mosaic.width = definition.matrixWidth * definition.tileWidth
+  mosaic.height = definition.matrixHeight * definition.tileHeight
+  const mosaicContext = mosaic.getContext('2d', { willReadFrequently: true })
+  if (!mosaicContext) {
+    for (const tile of tiles) tile.bitmap?.close()
+    throw new Error('This browser could not create a 2D canvas context.')
+  }
+  mosaicContext.imageSmoothingEnabled = false
+  for (const { row, column, bitmap } of tiles) {
+    if (bitmap) {
+      mosaicContext.drawImage(bitmap, column * definition.tileWidth, row * definition.tileHeight)
+      bitmap.close()
+    }
+  }
 
-  const response = await fetch(url, { mode: 'cors', credentials: 'omit' })
-  if (!response.ok) throw new Error(`GIBS returned HTTP ${response.status} for ${definition.date}.`)
+  const canvas = document.createElement('canvas')
+  canvas.width = WORLD_WIDTH
+  canvas.height = WORLD_HEIGHT
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) throw new Error('This browser could not create a 2D canvas context.')
+  context.imageSmoothingEnabled = false
+  const worldTileWidth = definition.matrixWidth * definition.tileWidth
+  const worldTileHeight = Math.ceil(worldTileWidth / 2)
+  context.drawImage(mosaic, 0, 0, worldTileWidth, worldTileHeight, 0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  const imageData = context.getImageData(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  const check = verifyPixels(imageData, definition)
+  if (check.validPixels < 1_000 || check.distinctColors < 10) {
+    throw new Error(
+      `Only ${check.validPixels} valid pixels in ${check.distinctColors} colors; this date is effectively empty.`,
+    )
+  }
+  return { canvas, imageData, check }
+}
+
+async function fetchWmtsTile(
+  definition: LayerDefinition,
+  row: number,
+  column: number,
+): Promise<{ row: number; column: number; bitmap?: ImageBitmap }> {
+  const replacements: Record<string, string> = {
+    Time: definition.date,
+    TileMatrixSet: definition.tileMatrixSet,
+    TileMatrix: definition.tileMatrix,
+    TileRow: String(row),
+    TileCol: String(column),
+  }
+  const tileUrl = definition.tileTemplate.replace(/\{([^}]+)\}/g, (placeholder, key: string) => {
+    const value = replacements[key]
+    if (value === undefined) throw new Error(`Unsupported GIBS WMTS tile placeholder: ${placeholder}`)
+    return encodeURIComponent(value)
+  })
+  const response = await fetchWithRetry(tileUrl, { mode: 'cors', credentials: 'omit' }, `${definition.id} tile ${row}/${column}`)
+  if (response.status === 404) return { row, column }
+  if (!response.ok) throw new Error(`GIBS returned HTTP ${response.status} for ${definition.date} tile ${row}/${column}.`)
   if (!response.headers.get('content-type')?.toLowerCase().includes('image/png')) {
-    throw new Error('GIBS GetMap did not return a PNG image.')
+    throw new Error(`GIBS returned a non-PNG tile for ${definition.date} (${row}/${column}).`)
   }
   const bitmap = await createImageBitmap(await response.blob())
-  try {
-    if (bitmap.width !== WORLD_WIDTH || bitmap.height !== WORLD_HEIGHT) {
-      throw new Error(`GIBS returned ${bitmap.width}×${bitmap.height}; expected 1440×720.`)
-    }
-    const canvas = document.createElement('canvas')
-    canvas.width = WORLD_WIDTH
-    canvas.height = WORLD_HEIGHT
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-    if (!context) throw new Error('This browser could not create a 2D canvas context.')
-    context.imageSmoothingEnabled = false
-    context.drawImage(bitmap, 0, 0)
-    const imageData = context.getImageData(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
-    const check = verifyPixels(imageData, definition)
-    if (check.validPixels < 1_000 || check.distinctColors < 10) {
-      throw new Error(
-        `Only ${check.validPixels} valid pixels in ${check.distinctColors} colors; this date is effectively empty.`,
-      )
-    }
-    return { canvas, imageData, check }
-  } finally {
+  if (bitmap.width !== definition.tileWidth || bitmap.height !== definition.tileHeight) {
+    const { width, height } = bitmap
     bitmap.close()
+    throw new Error(
+      `GIBS returned a ${width}×${height} tile; expected ${definition.tileWidth}×${definition.tileHeight}.`,
+    )
   }
+  return { row, column, bitmap }
 }
 
 function verifyPixels(imageData: ImageData, definition: LayerDefinition): PixelCheck {
@@ -718,11 +810,44 @@ function resolveColor(
 }
 
 async function fetchXml(url: string, label: string): Promise<Document> {
-  const response = await fetch(url, { mode: 'cors', credentials: 'omit' })
+  const response = await fetchWithRetry(url, { mode: 'cors', credentials: 'omit' }, label)
   if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}.`)
   const xml = new DOMParser().parseFromString(await response.text(), 'application/xml')
   if (xml.querySelector('parsererror')) throw new Error(`${label} was not valid XML.`)
   return xml
+}
+
+async function fetchWithRetry(url: string | URL, init: RequestInit, label: string): Promise<Response> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal })
+      if (response.ok || (response.status < 500 && response.status !== 429)) return response
+      lastError = new Error(`HTTP ${response.status}`)
+      if (attempt === MAX_FETCH_ATTEMPTS) {
+        throw new Error(`${label}: NASA GIBS returned HTTP ${response.status} after ${attempt} attempts.`)
+      }
+    } catch (error) {
+      lastError = error
+      if (attempt === MAX_FETCH_ATTEMPTS) {
+        const detail =
+          error instanceof DOMException && error.name === 'AbortError'
+            ? 'request timed out'
+            : error instanceof Error && error.message !== 'Failed to fetch'
+              ? error.message
+              : 'network connection or browser CORS policy blocked the request'
+        throw new Error(
+          `${label}: could not reach NASA GIBS after ${attempt} attempts (${detail}). Check your connection and access to gibs.earthdata.nasa.gov, then retry.`,
+        )
+      }
+    } finally {
+      window.clearTimeout(timeout)
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 400 * 2 ** (attempt - 1)))
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${label}: request failed.`)
 }
 
 function directChildText(parent: Element, localName: string): string | null {

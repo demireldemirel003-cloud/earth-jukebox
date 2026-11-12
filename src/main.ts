@@ -258,7 +258,14 @@ function updateLayerControls(): void {
     }
   }
   loadingSummary.textContent = `${allStates.filter((state) => state.status === 'ready').length} / ${states.size} ready`
-  layerErrors.innerHTML = allStates.filter((state) => state.status === 'error').map((state) => `<p><strong>${safeText(state.spec.id)}</strong>: ${safeText(state.error ?? 'Layer load failed.')}</p>`).join('')
+  const groupedErrors = new Map<string, string[]>()
+  for (const state of allStates.filter((item) => item.status === 'error')) {
+    const message = state.error ?? 'Layer load failed.'
+    groupedErrors.set(message, [...(groupedErrors.get(message) ?? []), state.spec.id])
+  }
+  layerErrors.innerHTML = Array.from(groupedErrors, ([message, ids]) =>
+    `<p><strong>${safeText(ids.join(', '))}</strong>: ${safeText(message)}</p>`,
+  ).join('')
   playButton.disabled = getActiveStates().length === 0
 }
 
@@ -487,7 +494,7 @@ function resetLoadingStates(): void {
     state.status = 'loading'; state.assetA = undefined; state.assetB = undefined; state.error = undefined
   }
   stageMessage.hidden = false
-  stageMessage.innerHTML = '<span class="stage-spinner"></span> Loading selected GIBS dates…'
+  stageMessage.innerHTML = '<span class="stage-spinner"></span> Loading NASA GIBS data…'
   updateLayerControls()
 }
 
@@ -506,29 +513,35 @@ async function loadAllLayers(): Promise<void> {
     q<HTMLElement>('#latest-complete-day').textContent = `Latest complete day: ${getLatestCompleteDate(gibsService)}`
     if (!comparisonDate) comparisonDate = shiftYear(selectedDate, -10)
     compareDatePicker.value = comparisonDate
-    const tasks = Array.from(states.values()).map(async (state) => {
-      try {
-        state.assetA = await loadLayer(gibsService!, state.spec, selectedDate, comparisonMode)
-        if (comparisonMode) state.assetB = await loadLayer(gibsService!, state.spec, comparisonDate, true)
-        state.status = 'ready'
-      } catch (error) {
-        state.status = 'error'
-        state.error = error instanceof Error ? error.message : 'Unknown GIBS error.'
+    const pending = Array.from(states.values())
+    let nextIndex = 0
+    const worker = async () => {
+      while (nextIndex < pending.length) {
+        const state = pending[nextIndex]
+        nextIndex += 1
+        try {
+          state.assetA = await loadLayer(gibsService!, state.spec, selectedDate, comparisonMode)
+          if (comparisonMode) state.assetB = await loadLayer(gibsService!, state.spec, comparisonDate, true)
+          state.status = 'ready'
+        } catch (error) {
+          state.status = 'error'
+          state.error = error instanceof Error ? error.message : 'Unknown GIBS error.'
+        }
+        if (epoch !== loadEpoch) return
+        updateLayerControls()
+        const focused = states.get(focusId)
+        if (focused && selectedAsset(focused)?.available) setFocus(focusId)
+        else {
+          const next = getReadyStates()[0]
+          if (next) setFocus(next.spec.id)
+        }
       }
-      if (epoch !== loadEpoch) return
-      updateLayerControls()
-      const focused = states.get(focusId)
-      if (focused && selectedAsset(focused)?.available) setFocus(focusId)
-      else {
-        const next = getReadyStates()[0]
-        if (next) setFocus(next.spec.id)
-      }
-    })
-    await Promise.all(tasks)
+    }
+    await Promise.all(Array.from({ length: Math.min(2, pending.length) }, () => worker()))
     if (epoch === loadEpoch && getReadyStates().length === 0) {
       setPixelStatus('is-error', 'No raster data available for the selected dates.')
       stageMessage.hidden = false
-      stageMessage.textContent = 'No layer image is available for this date. Choose another date.'
+      stageMessage.innerHTML = '<span>No layer image is available for this date.</span><button type="button" class="retry-button" data-action="retry">Retry loading</button>'
     }
   } catch (error) {
     if (epoch !== loadEpoch) return
@@ -537,7 +550,7 @@ async function loadAllLayers(): Promise<void> {
     updateLayerControls()
     setPixelStatus('is-error', message)
     stageMessage.hidden = false
-    stageMessage.textContent = message
+    stageMessage.innerHTML = `<span>${safeText(message)}</span><button type="button" class="retry-button" data-action="retry">Retry loading</button>`
   }
   updateUrl()
 }
@@ -614,6 +627,7 @@ layerList.addEventListener('click', (event) => {
   updateLayerControls(); drawScanPosition(columnIndex, false); updateUrl()
 })
 stage.addEventListener('pointerdown', (event) => {
+  if ((event.target as Element).closest('button[data-action="retry"]')) return
   if (!getReadyStates().length) return
   if (isPlaying) setPlaying(false)
   isScrubbing = true
@@ -628,6 +642,12 @@ function finishScrubbing(event: PointerEvent): void {
 }
 stage.addEventListener('pointerup', finishScrubbing)
 stage.addEventListener('pointercancel', finishScrubbing)
+stage.addEventListener('click', (event) => {
+  const target = event.target
+  if (target instanceof Element && target.closest('button[data-action="retry"]')) {
+    void loadAllLayers()
+  }
+})
 playButton.addEventListener('click', async () => {
   if (isPlaying) { setPlaying(false); return }
   if (!getActiveStates().length) { q<HTMLElement>('#audio-notice-text').textContent = 'Enable an available layer before playing.'; return }
