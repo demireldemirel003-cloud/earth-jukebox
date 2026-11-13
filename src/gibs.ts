@@ -117,6 +117,7 @@ export interface LayerDefinition extends LayerSpec {
   tileTemplate: string
   tileMatrixSet: string
   tileMatrix: string
+  tileScaleDenominator: number
   matrixWidth: number
   matrixHeight: number
   tileWidth: number
@@ -345,6 +346,7 @@ interface WmtsTileGrid {
   template: string
   matrixSet: string
   matrix: string
+  scaleDenominator: number
   matrixWidth: number
   matrixHeight: number
   tileWidth: number
@@ -373,15 +375,17 @@ function findWmtsTileGrid(service: GibsService, layer: Element, id: string): Wmt
     )
     if (!matrixSet) continue
     for (const matrix of Array.from(matrixSet.getElementsByTagNameNS('*', 'TileMatrix'))) {
+      const scaleDenominator = Number(directChildText(matrix, 'ScaleDenominator'))
       const matrixWidth = Number(directChildText(matrix, 'MatrixWidth'))
       const matrixHeight = Number(directChildText(matrix, 'MatrixHeight'))
       const tileWidth = Number(directChildText(matrix, 'TileWidth'))
       const tileHeight = Number(directChildText(matrix, 'TileHeight'))
-      if (![matrixWidth, matrixHeight, tileWidth, tileHeight].every(Number.isFinite)) continue
+      if (![scaleDenominator, matrixWidth, matrixHeight, tileWidth, tileHeight].every(Number.isFinite)) continue
       candidates.push({
         template,
         matrixSet: matrixSetId,
         matrix: directChildText(matrix, 'Identifier') ?? '',
+        scaleDenominator,
         matrixWidth,
         matrixHeight,
         tileWidth,
@@ -568,6 +572,7 @@ export async function loadLayerDefinition(
     tileTemplate: tileGrid.template,
     tileMatrixSet: tileGrid.matrixSet,
     tileMatrix: tileGrid.matrix,
+    tileScaleDenominator: tileGrid.scaleDenominator,
     matrixWidth: tileGrid.matrixWidth,
     matrixHeight: tileGrid.matrixHeight,
     tileWidth: tileGrid.tileWidth,
@@ -716,9 +721,18 @@ async function fetchLayerRaster(definition: LayerDefinition): Promise<LayerRaste
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('This browser could not create a 2D canvas context.')
   context.imageSmoothingEnabled = false
-  const worldTileWidth = definition.matrixWidth * definition.tileWidth
-  const worldTileHeight = Math.ceil(worldTileWidth / 2)
-  context.drawImage(mosaic, 0, 0, worldTileWidth, worldTileHeight, 0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  // WMTS matrices may overhang the globe, so crop by their advertised map scale.
+  const metersPerDegree = (2 * Math.PI * 6_378_137) / 360
+  const degreesPerPixel = (definition.tileScaleDenominator * 0.00028) / metersPerDegree
+  const worldPixelWidth = 360 / degreesPerPixel
+  const worldPixelHeight = 180 / degreesPerPixel
+  if (
+    worldPixelWidth > mosaic.width ||
+    worldPixelHeight > mosaic.height
+  ) {
+    throw new Error(`The GIBS ${definition.tileMatrixSet}/${definition.tileMatrix} tile matrix does not cover the world raster.`)
+  }
+  context.drawImage(mosaic, 0, 0, worldPixelWidth, worldPixelHeight, 0, 0, WORLD_WIDTH, WORLD_HEIGHT)
   const imageData = context.getImageData(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
   const check = verifyPixels(imageData, definition)
   if (check.validPixels < 1_000 || check.distinctColors < 10) {
